@@ -329,7 +329,7 @@ locals {
   // https://github.com/terraform-providers/terraform-provider-aws/issues/3963
   tags = { for t in keys(module.label.tags) : t => module.label.tags[t] if t != "Name" && t != "Namespace" }
 
-  elb_settings = [
+  initial_elb_settings = [
     {
       namespace = "aws:elb:loadbalancer"
       name      = "CrossZone"
@@ -353,7 +353,7 @@ locals {
     {
       namespace = "aws:elb:listener"
       name      = "ListenerProtocol"
-      value     = "HTTP"
+      value     = var.loadbalancer_listener_protocol
     },
     {
       namespace = "aws:elb:listener"
@@ -391,6 +391,11 @@ locals {
       value     = "TCP"
     },
     {
+      namespace = "aws:elasticbeanstalk:environment:process:default"
+      name      = "Protocol"
+      value     = var.loadbalancer_type == "network" ? "TCP" : "HTTP"
+    },
+    {
       namespace = "aws:elb:listener:${var.ssh_listener_port}"
       name      = "InstancePort"
       value     = "22"
@@ -412,18 +417,8 @@ locals {
     },
     {
       namespace = "aws:elbv2:loadbalancer"
-      name      = "AccessLogsS3Bucket"
-      value     = join("", aws_s3_bucket.elb_logs.*.id)
-    },
-    {
-      namespace = "aws:elbv2:loadbalancer"
       name      = "AccessLogsS3Enabled"
-      value     = "true"
-    },
-    {
-      namespace = "aws:elbv2:loadbalancer"
-      name      = "SecurityGroups"
-      value     = join(",", var.loadbalancer_security_groups)
+      value     = var.loadbalancer_type == "network" ? "false" : "true"
     },
     {
       namespace = "aws:elbv2:loadbalancer"
@@ -443,12 +438,7 @@ locals {
     {
       namespace = "aws:elbv2:listener:443"
       name      = "Protocol"
-      value     = "HTTPS"
-    },
-    {
-      namespace = "aws:elbv2:listener:443"
-      name      = "SSLCertificateArns"
-      value     = var.loadbalancer_certificate_arn
+      value     = var.loadbalancer_type == "network" ? "TCP" : "HTTPS"
     },
     {
       namespace = "aws:elbv2:listener:443"
@@ -464,28 +454,42 @@ locals {
       namespace = "aws:elasticbeanstalk:environment"
       name      = "LoadBalancerType"
       value     = var.loadbalancer_type
-    },
+    }
+  ]
 
-    ###===================== Application Load Balancer Health check settings =====================================================###
-    # The Application Load Balancer health check does not take into account the Elastic Beanstalk health check path
-    # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html
-    # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html#alb-default-process.config
+  ###===================== Application Load Balancer Health check settings =====================================================###
+  # The Application Load Balancer health check does not take into account the Elastic Beanstalk health check path
+  # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html
+  # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html#alb-default-process.config
+  application_settings = (var.loadbalancer_type == "network") ? null : [
     {
       namespace = "aws:elasticbeanstalk:environment:process:default"
       name      = "HealthCheckPath"
       value     = var.healthcheck_url
     },
     {
-      namespace = "aws:elasticbeanstalk:environment:process:default"
-      name      = "Port"
-      value     = var.application_port
+      namespace = "aws:elbv2:loadbalancer"
+      name      = "AccessLogsS3Bucket"
+      value     = join("", aws_s3_bucket.elb_logs.*.id)
+    },
+    {
+      namespace = "aws:elbv2:listener:443"
+      name      = "SSLCertificateArns"
+      value     = var.loadbalancer_certificate_arn
+    },
+    {
+      namespace = "aws:elbv2:loadbalancer"
+      name      = "SecurityGroups"
+      value     = join(",", var.loadbalancer_security_groups)
     },
     {
       namespace = "aws:elasticbeanstalk:environment:process:default"
-      name      = "Protocol"
-      value     = "HTTP"
+      name      = "Port"
+      value     = var.application_port
     }
   ]
+
+  elb_settings = merge(local.initial_elb_settings, local.application_settings)
 
   # If the tier is "WebServer" add the elb_settings, otherwise exclude them
   elb_settings_final = var.tier == "WebServer" ? local.elb_settings : []

@@ -56,8 +56,15 @@ variable "loadbalancer_type" {
   description = "Load Balancer type, e.g. 'application' or 'classic'"
 }
 
+variable "loadbalancer_listener_protocol" {
+  type        = string
+  default     = "HTTP"
+  description = "Protocol to use for listener, defaults to HTTP (Can be TCP etc)"
+}
+
 variable "dns_zone_id" {
   type        = string
+  default     = ""
   description = "Route53 parent zone ID. The module will create sub-domain DNS record in the parent zone for the EB environment"
 }
 
