@@ -1,5 +1,5 @@
 module "label" {
-  source      = "git::https://github.com/cloudposse/terraform-null-label.git?ref=tags/0.17.0"
+  source      = "git::https://github.com/cloudposse/terraform-null-label.git?ref=tags/0.19.2"
   namespace   = var.namespace
   environment = var.environment
   name        = var.name
@@ -79,34 +79,40 @@ data "aws_iam_policy_document" "ec2" {
 }
 
 resource "aws_iam_role_policy_attachment" "elastic_beanstalk_multi_container_docker" {
-  role       = aws_iam_role.ec2.name
+  count      = var.instance_role_name == "" ? 1 : 0
+  role       = aws_iam_role.ec2[0].name
   policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker"
 }
 
 resource "aws_iam_role" "ec2" {
+  count              = var.instance_role_name == "" ? 1 : 0
   name               = "${module.label.id}-eb-ec2"
   assume_role_policy = data.aws_iam_policy_document.ec2.json
 }
 
 resource "aws_iam_role_policy" "default" {
+  count  = var.instance_role_name == "" ? 1 : 0
   name   = "${module.label.id}-eb-default"
-  role   = aws_iam_role.ec2.id
-  policy = data.aws_iam_policy_document.extended.json
+  role   = aws_iam_role.ec2[0].id
+  policy = data.aws_iam_policy_document.default.json
 }
 
 resource "aws_iam_role_policy_attachment" "web_tier" {
-  role       = aws_iam_role.ec2.name
+  count      = var.instance_role_name == "" ? 1 : 0
+  role       = aws_iam_role.ec2[0].name
   policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier"
 }
 
 resource "aws_iam_role_policy_attachment" "worker_tier" {
-  role       = aws_iam_role.ec2.name
+  count      = var.instance_role_name == "" ? 1 : 0
+  role       = aws_iam_role.ec2[0].name
   policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier"
 }
 
 resource "aws_iam_role_policy_attachment" "ssm_ec2" {
-  role       = aws_iam_role.ec2.name
-  policy_arn = var.prefer_legacy_ssm_policy ? "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM" : "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  count      = var.instance_role_name == "" ? 1 : 0
+  role       = aws_iam_role.ec2[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM"
 
   lifecycle {
     create_before_destroy = true
@@ -114,7 +120,8 @@ resource "aws_iam_role_policy_attachment" "ssm_ec2" {
 }
 
 resource "aws_iam_role_policy_attachment" "ssm_automation" {
-  role       = aws_iam_role.ec2.name
+  count      = var.instance_role_name == "" ? 1 : 0
+  role       = aws_iam_role.ec2[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonSSMAutomationRole"
 
   lifecycle {
@@ -125,13 +132,15 @@ resource "aws_iam_role_policy_attachment" "ssm_automation" {
 # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/create_deploy_docker.container.console.html
 # http://docs.aws.amazon.com/AmazonECR/latest/userguide/ecr_managed_policies.html#AmazonEC2ContainerRegistryReadOnly
 resource "aws_iam_role_policy_attachment" "ecr_readonly" {
-  role       = aws_iam_role.ec2.name
+  count      = var.instance_role_name == "" ? 1 : 0
+  role       = aws_iam_role.ec2[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
 resource "aws_ssm_activation" "ec2" {
+  count              = var.instance_role_name == "" ? 1 : 0
   name               = module.label.id
-  iam_role           = aws_iam_role.ec2.id
+  iam_role           = aws_iam_role.ec2[0].id
   registration_limit = var.autoscale_max
 }
 
@@ -294,14 +303,9 @@ data "aws_iam_policy_document" "default" {
   }
 }
 
-data "aws_iam_policy_document" "extended" {
-  source_json   = data.aws_iam_policy_document.default.json
-  override_json = var.extended_ec2_policy_document
-}
-
 resource "aws_iam_instance_profile" "ec2" {
   name = "${module.label.id}-eb-ec2"
-  role = aws_iam_role.ec2.name
+  role =  var.instance_role_name == "" ? aws_iam_role.ec2[0].name : var.instance_role_name
 }
 
 resource "aws_security_group" "default" {
@@ -338,7 +342,7 @@ locals {
     {
       namespace = "aws:elb:loadbalancer"
       name      = "CrossZone"
-      value     = var.loadbalancer_crosszone
+      value     = "true"
     },
     {
       namespace = "aws:elb:loadbalancer"
@@ -551,7 +555,7 @@ resource "aws_elastic_beanstalk_environment" "default" {
   setting {
     namespace = "aws:autoscaling:launchconfiguration"
     name      = "SecurityGroups"
-    value     = join(",", compact(sort(concat([aws_security_group.default.id], var.additional_security_groups))))
+    value     = join(",", compact(concat([aws_security_group.default.id], sort(var.additional_security_groups))))
     resource  = ""
   }
 
@@ -664,28 +668,24 @@ resource "aws_elastic_beanstalk_environment" "default" {
     namespace = "aws:ec2:instances"
     name      = "EnableSpot"
     value     = var.enable_spot_instances ? "true" : "false"
-    resource  = ""
   }
 
   setting {
     namespace = "aws:ec2:instances"
     name      = "SpotFleetOnDemandBase"
     value     = var.spot_fleet_on_demand_base
-    resource  = ""
   }
 
   setting {
     namespace = "aws:ec2:instances"
     name      = "SpotFleetOnDemandAboveBasePercentage"
     value     = var.spot_fleet_on_demand_above_base_percentage == -1 ? (var.environment_type == "LoadBalanced" ? 70 : 0) : var.spot_fleet_on_demand_above_base_percentage
-    resource  = ""
   }
 
   setting {
     namespace = "aws:ec2:instances"
     name      = "SpotMaxPrice"
-    value     = var.spot_max_price == -1 ? "" : var.spot_max_price
-    resource  = ""
+    value     = var.spot_max_price == -1 ? "null" : var.spot_max_price
   }
 
   setting {
@@ -715,35 +715,20 @@ resource "aws_elastic_beanstalk_environment" "default" {
       namespace = "aws:autoscaling:launchconfiguration"
       name      = "ImageId"
       value     = setting.value
-      resource  = ""
     }
   }
 
   setting {
     namespace = "aws:elasticbeanstalk:command"
     name      = "BatchSizeType"
-    value     = var.deployment_batch_size_type
+    value     = "Fixed"
     resource  = ""
   }
 
   setting {
     namespace = "aws:elasticbeanstalk:command"
     name      = "BatchSize"
-    value     = var.deployment_batch_size
-    resource  = ""
-  }
-
-  setting {
-    namespace = "aws:elasticbeanstalk:command"
-    name      = "IgnoreHealthCheck"
-    value     = var.deployment_ignore_health_check
-    resource  = ""
-  }
-
-  setting {
-    namespace = "aws:elasticbeanstalk:command"
-    name      = "Timeout"
-    value     = var.deployment_timeout
+    value     = "1"
     resource  = ""
   }
 
@@ -882,17 +867,6 @@ resource "aws_elastic_beanstalk_environment" "default" {
     }
   }
 
-  // dynamic needed as "spot max price" should only have a value if it is defined.
-  dynamic "setting" {
-    for_each = var.spot_max_price == -1 ? [] : [var.spot_max_price]
-    content {
-      namespace = "aws:ec2:instances"
-      name      = "SpotMaxPrice"
-      value     = var.spot_max_price
-      resource  = ""
-    }
-  }
-
   // Add environment variables if provided
   dynamic "setting" {
     for_each = var.env_vars
@@ -906,11 +880,11 @@ resource "aws_elastic_beanstalk_environment" "default" {
 }
 
 data "aws_elb_service_account" "main" {
-  count = var.tier == "WebServer" && var.environment_type == "LoadBalanced" ? 1 : 0
+  count = var.tier == "WebServer" ? 1 : 0
 }
 
 data "aws_iam_policy_document" "elb_logs" {
-  count = var.tier == "WebServer" && var.environment_type == "LoadBalanced" ? 1 : 0
+  count = var.tier == "WebServer" ? 1 : 0
 
   statement {
     sid = ""
@@ -933,7 +907,7 @@ data "aws_iam_policy_document" "elb_logs" {
 }
 
 resource "aws_s3_bucket" "elb_logs" {
-  count         = var.tier == "WebServer" && var.environment_type == "LoadBalanced" ? 1 : 0
+  count         = var.tier == "WebServer" ? 1 : 0
   bucket        = "${module.label.id}-eb-loadbalancer-logs"
   acl           = "private"
   force_destroy = var.force_destroy
@@ -941,7 +915,7 @@ resource "aws_s3_bucket" "elb_logs" {
 }
 
 module "dns_hostname" {
-  source  = "git::https://github.com/cloudposse/terraform-aws-route53-cluster-hostname.git?ref=tags/0.5.0"
+  source  = "git::https://github.com/cloudposse/terraform-aws-route53-cluster-hostname.git?ref=tags/0.7.0"
   enabled = var.dns_zone_id != "" && var.tier == "WebServer" ? true : false
   name    = var.dns_subdomain != "" ? var.dns_subdomain : var.name
   zone_id = var.dns_zone_id

@@ -24,7 +24,7 @@ output "elb_zone_id" {
 }
 
 output "ec2_instance_profile_role_name" {
-  value       = aws_iam_role.ec2.name
+  value       =  var.instance_role_name == "" ? aws_iam_role.ec2[0].name : var.instance_role_name
   description = "Instance IAM role name"
 }
 
@@ -83,3 +83,7 @@ output "triggers" {
   value       = aws_elastic_beanstalk_environment.default.triggers
 }
 
+output "environment_id" {
+  description = "Environment id"
+  value       = aws_elastic_beanstalk_environment.default.id
+}
